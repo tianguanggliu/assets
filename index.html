@@ -1,0 +1,303 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CKEditor Integration</title>
+    <script src="https://cdn.ckeditor.com/4.16.2/standard/ckeditor.js"></script>
+    <style id="cur-style">
+        .r-table {
+            border: 1px solid red;
+            border-collapse: collapse;
+            border-spacing: 0;
+            width: 100%;
+        }
+
+        .r-table th {
+            background-color: #eaeaea;
+        }
+
+        .r-table td,
+        .r-table th {
+            height: 40px;
+            width: 14%;
+            text-align: center;
+            border: 1px solid #000;
+        }
+
+        .r-table td div {
+            margin: 16px 0;
+            white-space: nowrap;
+        }
+
+        .day-item {
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            display: inline-block;
+            line-height: 40px;
+            border: 2px solid currentColor;
+            font-weight: 600;
+            color: #5b5858;
+        }
+
+        center button {
+            width: 100px;
+            height: 32px;
+            margin-top: 32px;
+        }
+
+        #submit {
+            width: 100px;
+            height: 32px;
+        }
+
+        @media print {
+            @page {
+                size: A4;
+                margin: 0;
+            }
+
+            body {
+                -webkit-print-color-adjust: exact;
+                print-color-adjust: exact;
+            }
+        }
+    </style>
+</head>
+
+
+<body>
+    <div id="table-print" hidden>
+        <div id="table-view"></div>
+        <center>
+            <button type="button" id="back">返回</button>
+            <button type="button" id="print" style="margin-left: 1em;">打印</button>
+        </center>
+    </div>
+    <div id="table-create">
+        <h2>
+            <center>
+                班表生成器
+            </center>
+            <center>
+                <input type="text" placeholder="姓名" id="username"
+                    style="width: 100px; height: 26px; text-align: center; margin-top: 8px;">
+                <input type="month" id="date"
+                    style="width: 100px; height: 26px; text-align: center; margin-top: 8px;"><br>
+            </center>
+        </h2>
+        <form action="your-server-side-code" method="post">
+            <h4>
+                <center>
+                    班时图例
+                </center>
+            </h4>
+            <textarea name="editor1" id="editor1" rows="10" cols="80"></textarea>
+            <hr>
+            <h4>
+                <center>
+                    个人班时
+                </center>
+            </h4>
+            <textarea name="editor1" id="editor2" rows="10" cols="80"></textarea>
+            <script>
+                CKEDITOR.replace('editor1', { toolbar: [{ name: 'editing', items: ['Redo', 'Undo', 'Table'] }] });
+                CKEDITOR.replace('editor2', { toolbar: [{ name: 'editing', items: ['Redo', 'Undo', 'Table'] }] });
+            </script>
+            <br>
+            <center><button type="button" id="submit">生成</button></center>
+            <script>
+                // 获取表格
+                function getTable(id) {
+                    let iframe = document.querySelector(`#cke_${id} iframe`);
+                    let iframeDocument = iframe.contentDocument || iframe.contentWindow.document;
+                    let table = iframeDocument.querySelector('table');
+                    return table
+                }
+                // 提取数据中的时间范围
+                function extractTimeRange(str) {
+                    // 正则表达式来匹配时间范围
+                    const timeRangePattern = /\b\d{1,2}:\d{2}-\d{1,2}:\d{2}\b/;
+                    const match = str.match(timeRangePattern);
+                    return match ? match[0] : null;
+                }
+                // 获取兄弟节点的内容
+                function getNextSiblings(elem) {
+                    let siblings = [];
+                    while (elem = elem.nextElementSibling) {
+                        siblings.push(elem.textContent);
+                    }
+                    const text = siblings.join('')
+                    const timeRange = extractTimeRange(text);
+                    return timeRange ? `${timeRange}${text.includes('夜') ? '(夜)' : ''}` : text
+                }
+                // 获取图例中的映射
+                function getMapFromTable(table) {
+                    const map = new Map()
+                    table.querySelectorAll('tr').forEach(tr => {
+                        const first = tr.querySelectorAll('td')[0]
+                        const firstContent = first.textContent
+                        const bg = getComputedStyle(first).backgroundColor
+                        if (firstContent) {
+                            const time = getNextSiblings(first)
+                            map.set(`${firstContent}[]${bg}`, { time, bg, hours: firstContent })
+                        }
+                    })
+                    return map
+                }
+                // 获取个人工时的映射
+                function userMapFromTable(table, username, colorMap) {
+                    const map = new Map()
+                    const trs = Array.from(table.querySelectorAll('tr'))
+                    const tr = trs.find(item => item.textContent.includes(username))
+                    if (tr) {
+                        let startIndex;
+                        table.querySelectorAll('td').forEach((td, index) => {
+                            const content = td.textContent;
+                            if (content == username) {
+                                startIndex = index + 2;
+                            }
+                            const workIndex = index - startIndex
+                            if (workIndex >= 0 && workIndex <= 31 && content) {
+                                const bg = getComputedStyle(td).backgroundColor
+                                const key = `${content}[]${bg}`
+                                const time = colorMap.get(key)
+                                if (colorMap.has(key)) {
+                                    map.set(workIndex + 1, colorMap.get(key))
+                                }
+                            }
+                        })
+                    }
+                    return map
+                }
+                // 获取当月日历
+                function getCurrentMonthCalendar() {
+                    const date = document.getElementById('date').value || undefined
+                    const now = new Date(date);
+                    const year = now.getFullYear();
+                    const month = now.getMonth();
+
+                    const firstDayOfMonth = new Date(year, month, 1);
+                    const lastDayOfMonth = new Date(year, month + 1, 0);
+
+                    const calendar = [];
+                    let week = [];
+                    let dayOfWeek = (firstDayOfMonth.getDay() + 6) % 7;
+                    for (let i = 0; i < dayOfWeek; i++) {
+                        week.push(null);
+                    }
+                    for (let day = 1; day <= lastDayOfMonth.getDate(); day++) {
+                        week.push({
+                            day: day,
+                            weekday: dayOfWeek
+                        });
+
+                        dayOfWeek = (dayOfWeek + 1) % 7;
+                        if (week.length === 7) {
+                            calendar.push(week);
+                            week = [];
+                        }
+                    }
+                    while (week.length < 7) {
+                        week.push(null);
+                    }
+                    calendar.push(week);
+
+                    return calendar;
+                }
+                // 设置日历为当月
+                function setDefault() {
+                    const now = new Date()
+                    const year = now.getFullYear();
+                    const month = now.getMonth() + 1;
+                    const name = localStorage.getItem('username')
+                    if (name) document.querySelector('#username').value = name
+                    document.getElementById('date').value = `${year}-${month < 10 ? '0' : ''}${month}`
+                }
+
+                setDefault();
+                document.getElementById('back').onclick = () => {
+                    document.getElementById('table-create').hidden = false
+                    document.getElementById('table-print').hidden = true
+                }
+                document.getElementById('print').onclick = () => {
+                    // 获取指定 ID 的元素
+                    let content = document.getElementById('table-view');
+                    // 创建一个新窗口
+                    let printWindow = window.open('', '');
+                    // 写入新窗口的内容
+                    printWindow.document.write(`<html><head><title></title>${document.querySelector('#cur-style').outerHTML}</head><body>${content.innerHTML}</body></html>`);
+                    printWindow.document.close();
+                    printWindow.print();
+                }
+                document.getElementById('submit').onclick = () => {
+                    const table1 = getTable('editor1')
+                    const table2 = getTable('editor2')
+                    const name = document.querySelector('#username').value
+                    if (!table1 || !table2 || !name || !document.getElementById('date').value) {
+                        alert('班时图例、个人班时、姓名、日期必填')
+                        return
+                    }
+                    localStorage.setItem('username', name)
+                    const colorMap = getMapFromTable(table1)
+                    const dayMap = userMapFromTable(table2, name, colorMap);
+                    console.log(colorMap)
+                    console.log(dayMap)
+                    drawTable(dayMap)
+                    document.getElementById('table-create').hidden = true
+                    document.getElementById('table-print').hidden = false
+                }
+                function getTrs(dayMap) {
+                    let body = '';
+                    const calendar = getCurrentMonthCalendar()
+                    const trs = []
+                    calendar.forEach(week => {
+                        const tds = []
+                        week.forEach(day => {
+                            if (day) {
+                                const item = dayMap.get(day.day) || {}
+                                tds.push(`<td style="background: ${item.bg}">
+                                    <div class="day-item">${day.day}</div>
+                                    <div style="font-size: 12px;" contenteditable="true">考核(${item.hours || '？'})</div>
+                                    <div contenteditable="true">${item.time || '？'}</div>
+                                </td>`)
+                            } else {
+                                tds.push(`<td></td>`)
+                            }
+                        })
+                        trs.push(`<tr>${tds.join(' ')}</tr>`)
+                    })
+                    return `<tbody>${trs.join('')}</tbody>`
+                }
+
+                function drawTable(dayMap) {
+                    const date = document.getElementById('date').value
+                    const ele = `    
+                        <table class="r-table">
+                            <caption>
+                                <h3>${date} 班时</h3>
+                            </caption>
+                            <thead>
+                                <tr>
+                                    <th>星期一</th>
+                                    <th>星期二</th>
+                                    <th>星期三</th>
+                                    <th>星期四</th>
+                                    <th>星期五</th>
+                                    <th>星期六</th>
+                                    <th>星期日</th>
+                                </tr>
+                            </thead>
+                            ${getTrs(dayMap)}                    
+                        </table>
+                                `
+                    document.querySelector('#table-view').innerHTML = ele
+                }
+            </script>
+        </form>
+    </div>
+</body>
+
+</html>
